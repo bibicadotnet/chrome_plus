@@ -1,9 +1,9 @@
 #ifndef CHROME_PLUS_SRC_VERSION_H_
 #define CHROME_PLUS_SRC_VERSION_H_
 
-#define RELEASE_VER_MAIN 1
-#define RELEASE_VER_SUB 1
-#define RELEASE_VER_FIX 1
+#define RELEASE_VER_MAIN 01
+#define RELEASE_VER_SUB 01
+#define RELEASE_VER_FIX 2026
 
 #define TOSTRING2(arg) #arg
 #define TOSTRING(arg) TOSTRING2(arg)
