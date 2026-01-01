@@ -11,6 +11,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       id-token: write
       attestations: write
       artifact-metadata: write
@@ -118,4 +119,4 @@ jobs:
           tag_name: ${{ env.VERSION }}
           name: ${{ env.VERSION }}
         env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
