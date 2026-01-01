@@ -2,8 +2,8 @@
 #define CHROME_PLUS_SRC_VERSION_H_
 
 #define RELEASE_VER_MAIN 1
-#define RELEASE_VER_SUB 0
-#define RELEASE_VER_FIX 0
+#define RELEASE_VER_SUB 1
+#define RELEASE_VER_FIX 1
 
 #define TOSTRING2(arg) #arg
 #define TOSTRING(arg) TOSTRING2(arg)
@@ -13,3 +13,4 @@
   "." TOSTRING(RELEASE_VER_SUB) "." TOSTRING(RELEASE_VER_FIX)
 
 #endif  // CHROME_PLUS_SRC_VERSION_H_
+
