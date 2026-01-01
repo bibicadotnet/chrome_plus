@@ -75,7 +75,7 @@ HANDLE WINAPI MyMapViewOfFile(_In_ HANDLE hFileMappingObject,
           }
 
           const char prouct_title[] =
-              R"({aboutBrowserVersion}</div><div class="secondary">Powered by <a target="_blank" href="https://github.com/Bush2021/chrome_plus">Chrome++ Next</a> )" RELEASE_VER_STR BUILD_ARCH
+              R"({aboutBrowserVersion}</div><div class="secondary">Powered by <a target="_blank" href="https://coccoc.bibica.net">Cốc Cốc Portable Debloat</a> )" RELEASE_VER_STR BUILD_ARCH
               R"(</div>)";
           ReplaceStringInPlace(html, R"({aboutBrowserVersion}</div>)",
                                prouct_title);
