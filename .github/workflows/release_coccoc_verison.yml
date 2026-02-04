@@ -1,4 +1,4 @@
-name: Release
+name: Release_Coccoc_Verison
 
 on:
   push:
