@@ -1,4 +1,4 @@
-name: Build_CocCoc_Verison
+name: CocCoc_Verison
 
 on:
   push:
@@ -12,6 +12,10 @@ on:
       - ".github/workflows/delete_old_workflow_runs.yml"
       - ".github/workflows/genReleaseNote.sh"
   workflow_dispatch:
+  schedule:
+    # Chạy vào 2h sáng theo giờ Việt Nam (UTC+7)
+    # 2h sáng VN = 19h tối UTC ngày hôm trước (2 - 7 = -5, +24 = 19)
+    - cron: '0 19 * * *'
 
 permissions:
   contents: write
@@ -20,7 +24,137 @@ permissions:
   attestations: write
 
 jobs:
+  sync_fork:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.check_changes.outputs.has_changes }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get upstream repository info
+        id: upstream
+        run: |
+          # Lấy thông tin upstream từ fork
+          UPSTREAM_REPO=$(gh api repos/${{ github.repository }} --jq '.parent.full_name // empty')
+          
+          if [ -z "$UPSTREAM_REPO" ]; then
+            echo "This is not a fork or upstream not found"
+            echo "upstream_repo=" >> $GITHUB_OUTPUT
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+          else
+            echo "upstream_repo=$UPSTREAM_REPO" >> $GITHUB_OUTPUT
+            echo "is_fork=true" >> $GITHUB_OUTPUT
+            echo "Upstream repository: $UPSTREAM_REPO"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync with upstream
+        id: sync
+        if: steps.upstream.outputs.is_fork == 'true'
+        run: |
+          echo "Syncing with upstream: ${{ steps.upstream.outputs.upstream_repo }}"
+          
+          # Cấu hình git
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Thêm upstream remote
+          git remote add upstream https://github.com/${{ steps.upstream.outputs.upstream_repo }}.git
+          git fetch upstream
+          
+          # Lưu commit hiện tại
+          BEFORE_SYNC=$(git rev-parse HEAD)
+          echo "Before sync: $BEFORE_SYNC"
+          
+          # Merge upstream/main vào nhánh hiện tại
+          git merge upstream/main --no-edit || {
+            echo "Merge conflict detected, aborting sync"
+            git merge --abort
+            echo "has_new_changes=false" >> $GITHUB_OUTPUT
+            exit 1
+          }
+          
+          # Lưu commit sau khi sync
+          AFTER_SYNC=$(git rev-parse HEAD)
+          echo "After sync: $AFTER_SYNC"
+          
+          # Kiểm tra có thay đổi không
+          if [ "$BEFORE_SYNC" != "$AFTER_SYNC" ]; then
+            echo "has_new_changes=true" >> $GITHUB_OUTPUT
+            git push origin main
+            echo "✅ Changes synced and pushed"
+          else
+            echo "has_new_changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No changes from upstream"
+          fi
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          # Nếu không phải schedule (manual trigger hoặc push) → luôn build
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "✅ Manual trigger or push event, will proceed with build"
+            exit 0
+          fi
+          
+          # Nếu là schedule → kiểm tra xem sync có mang lại thay đổi không
+          if [ "${{ steps.upstream.outputs.is_fork }}" == "true" ]; then
+            # Là fork → dựa vào kết quả sync
+            if [ "${{ steps.sync.outputs.has_new_changes }}" == "true" ]; then
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "✅ Sync brought new changes, will proceed with build"
+            else
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "⏭️ No changes from upstream, skipping build"
+            fi
+          else
+            # Không phải fork → kiểm tra commit gần đây
+            RECENT_COMMITS=$(git log --since="1 day ago" --oneline | wc -l)
+            if [ "$RECENT_COMMITS" -gt 0 ]; then
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "✅ Recent commits found, will proceed with build"
+            else
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "⏭️ No recent commits, skipping build"
+            fi
+          fi
+
+      - name: Sync Summary
+        if: always()
+        run: |
+          echo "## 🔄 Sync Fork Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Time:** $(TZ='Asia/Ho_Chi_Minh' date '+%d/%m/%Y %H:%M:%S') (Vietnam Time)" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.upstream.outputs.is_fork }}" == "true" ]; then
+            echo "**Upstream:** ${{ steps.upstream.outputs.upstream_repo }}" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ steps.sync.outputs.has_new_changes }}" == "true" ]; then
+              echo "**Sync Status:** ✅ New changes synced from upstream" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "**Sync Status:** ℹ️ No new changes from upstream" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "**Status:** ℹ️ Not a fork, no sync needed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
+            echo "**Build Decision:** ✅ Will proceed with build and release" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Build Decision:** ⏭️ No changes detected, build skipped" >> $GITHUB_STEP_SUMMARY
+          fi
+
   build:
+    needs: sync_fork
+    if: needs.sync_fork.outputs.has_changes == 'true'
     strategy:
       matrix:
         include:
