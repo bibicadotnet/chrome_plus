@@ -48,7 +48,7 @@ jobs:
       - name: Get Latest Workflow Run
         id: workflow
         run: |
-          RUN_ID=$(gh api repos/${{ github.repository }}/actions/workflows/build.yml/runs \
+          RUN_ID=$(gh api repos/${{ github.repository }}/actions/workflows/build_coccoc_verison.yml/runs \
             --jq '.workflow_runs[0].id')
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
         env:
