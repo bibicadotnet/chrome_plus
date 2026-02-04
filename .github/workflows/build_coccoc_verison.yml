@@ -8,20 +8,16 @@ on:
       - "*.md"
       - "LICENSE"
       - "setdll/**"
-      - "src/version.h"
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/workflows/delete_old_workflow_runs.yml"
       - ".github/workflows/genReleaseNote.sh"
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (SemVer)'
-        required: true
 
 permissions:
   contents: write
   packages: write
-  pull-requests: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -43,29 +39,32 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: 'true'
+          fetch-depth: 0
+
+      - name: Get Vietnam Date Version
+        shell: bash
+        run: |
+          # Lấy ngày giờ UTC và chuyển sang múi giờ Việt Nam (UTC+7)
+          VERSION=$(TZ='Asia/Ho_Chi_Minh' date +%d.%m.%Y)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Building version: $VERSION"
+
+      - name: Update version.h
+        shell: bash
+        run: |
+          # Tách version thành ngày, tháng, năm
+          IFS='.' read -r DAY MONTH YEAR <<< "${{ env.VERSION }}"
+          
+          # Cập nhật version.h với ngày tháng năm
+          sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$DAY"'/' src/version.h
+          sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MONTH"'/' src/version.h
+          sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$YEAR"'/' src/version.h
 
       - name: Personalize for Cốc Cốc Portable Debloat
         shell: bash
         run: |
           sed -i 's/VALUE "FileDescription", "Chrome++ Next"/VALUE "FileDescription", "Cốc Cốc Portable Debloat"/g' src/chrome++.rc
           sed -i 's|https://github.com/Bush2021/chrome_plus">Chrome++ Next</a>|https://coccoc.bibica.net">Cốc Cốc Portable Debloat</a>|g' src/pakpatch.cc
-
-      - name: Update version.h
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            COMMIT_HASH=$(git rev-parse --short HEAD)
-            VERSION="alpha-${COMMIT_HASH}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            sed -i '/#define RELEASE_VER_STR/,/TOSTRING(RELEASE_VER_FIX)/c\#define RELEASE_VER_STR "'"$VERSION"'"' src/version.h
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-            sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
-            sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
-            sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
-          fi
 
       - name: Set CLANG_BIN
         shell: bash
@@ -95,50 +94,189 @@ jobs:
           name: version-${{ matrix.arch }}-${{ env.VERSION }}
           path: build/release/*
 
-  create_pr:
+  release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Set up Git Configurations
+      - name: Get Vietnam Date Version
+        run: |
+          VERSION=$(TZ='Asia/Ho_Chi_Minh' date +%d.%m.%Y)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Creating release for version: $VERSION"
+
+      - name: Get Last Tag
+        run: |
+          LAST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null || echo "01.01.2025")
+          echo "LAST_TAG=$LAST_TAG" >> $GITHUB_ENV
+          echo "Last tag: $LAST_TAG"
+
+      - name: Create and Push Tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git push origin --delete release || true
-          git checkout -b release
+          
+          # Kiểm tra xem tag đã tồn tại chưa
+          if git rev-parse "${{ env.VERSION }}" >/dev/null 2>&1; then
+            echo "Tag ${{ env.VERSION }} already exists, deleting old tag..."
+            git tag -d "${{ env.VERSION }}" || true
+            git push origin :refs/tags/${{ env.VERSION }} || true
+          fi
+          
+          git tag -a "${{ env.VERSION }}" -m "Release ${{ env.VERSION }}"
+          git push origin "${{ env.VERSION }}"
 
-      - name: Update version.h and Push
-        shell: bash
+      - name: Generate Release Notes
         run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            COMMIT_HASH=$(git rev-parse --short HEAD)
-            VERSION="alpha-${COMMIT_HASH}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            sed -i '/#define RELEASE_VER_STR/,/TOSTRING(RELEASE_VER_FIX)/c\#define RELEASE_VER_STR "'"$VERSION"'"' src/version.h
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-            sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
-            sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
-            sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
+          if [ -f .github/workflows/genReleaseNote.sh ]; then
+            chmod +x .github/workflows/genReleaseNote.sh
+            .github/workflows/genReleaseNote.sh -v ${{ env.LAST_TAG }}...${{ env.VERSION }} || echo "Failed to generate release notes"
+          fi
+          
+          # Tạo release notes mặc định nếu script không tồn tại hoặc thất bại
+          if [ ! -f release.md ]; then
+            cat > release.md << EOF
+          # Release ${{ env.VERSION }}
+          
+          ## Build Information
+          - Version: ${{ env.VERSION }}
+          - Build Date: $(TZ='Asia/Ho_Chi_Minh' date '+%d/%m/%Y %H:%M:%S') (Vietnam Time)
+          - Previous Version: ${{ env.LAST_TAG }}
+          
+          ## Changes
+          - Auto-generated release from build workflow
+          
+          ## Download
+          Choose the appropriate package for your system:
+          - **Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z**: Main package with all architectures
+          - **setdll.7z**: SetDLL package with version.dll files
+          EOF
           fi
 
-          if [ -n "$(git status --porcelain)" ]; then
-            git add src/version.h
-            git commit -m "build(release): bump version to ${VERSION}"
+      - name: Get SetDll Latest Release
+        id: setdll
+        continue-on-error: true
+        run: |
+          RELEASE_INFO=$(gh api repos/Bush2021/setdll/releases/latest 2>/dev/null || echo '{}')
+          DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[0].browser_download_url // empty')
+          
+          if [ -n "$DOWNLOAD_URL" ]; then
+            echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+            echo "SetDLL URL found: $DOWNLOAD_URL"
+          else
+            echo "download_url=" >> $GITHUB_OUTPUT
+            echo "SetDLL release not found, will skip setdll package"
           fi
-          git push origin release --force
-
-      - name: Create Pull Request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr create --base main --head release --title "build(release): bump version to ${{ github.event.inputs.version }}" --body "Bump version to ${{ github.event.inputs.version }}" || echo "PR exists"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Output Run ID
-        run: echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_OUTPUT
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: build_artifacts
+
+      - name: List Downloaded Artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          ls -laR build_artifacts/
+
+      - name: Package All Artifacts
+        run: |
+          # Tạo cấu trúc thư mục
+          mkdir -p artifacts/x86/{App,Data,Cache}
+          mkdir -p artifacts/x64/{App,Data,Cache}
+          mkdir -p artifacts/arm64/{App,Data,Cache}
+          
+          # Copy artifacts
+          echo "Copying x86 artifacts..."
+          cp -r build_artifacts/version-x86-${{ env.VERSION }}/* artifacts/x86/App/
+          
+          echo "Copying x64 artifacts..."
+          cp -r build_artifacts/version-x64-${{ env.VERSION }}/* artifacts/x64/App/
+          
+          echo "Copying arm64 artifacts..."
+          cp -r build_artifacts/version-arm64-${{ env.VERSION }}/* artifacts/arm64/App/
+          
+          # Copy config file nếu tồn tại
+          if [ -f src/chrome++.ini ]; then
+            cp src/chrome++.ini artifacts/x86/App/
+            cp src/chrome++.ini artifacts/x64/App/
+            cp src/chrome++.ini artifacts/arm64/App/
+          fi
+          
+          # Tạo archive
+          cd artifacts
+          7z a -mx=9 -m0=lzma2 -mmt=on ../Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z *
+          cd ..
+          
+          echo "Package created successfully"
+          ls -lh Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z
+
+      - name: Package SetDll
+        if: steps.setdll.outputs.download_url != ''
+        continue-on-error: true
+        run: |
+          mkdir -p setdll_package_contents
+          
+          echo "Downloading SetDLL..."
+          wget -O setdll_latest.7z ${{ steps.setdll.outputs.download_url }}
+          7z x setdll_latest.7z -o./setdll_package_contents
+          rm setdll_latest.7z
+          
+          echo "Copying DLL files..."
+          cp ./build_artifacts/version-x86-${{ env.VERSION }}/version.dll ./setdll_package_contents/version-x86.dll
+          cp ./build_artifacts/version-x64-${{ env.VERSION }}/version.dll ./setdll_package_contents/version-x64.dll
+          cp ./build_artifacts/version-arm64-${{ env.VERSION }}/version.dll ./setdll_package_contents/version-arm64.dll
+          
+          if [ -f ./src/chrome++.ini ]; then
+            cp ./src/chrome++.ini ./setdll_package_contents/chrome++.ini
+          fi
+          
+          cd setdll_package_contents
+          echo "Contents before packaging:"
+          ls -Al
+          7z a -mx=9 -ms=on -m0=lzma2 -mmt=on ../setdll.7z *
+          cd ..
+          
+          echo "SetDLL package created successfully"
+          ls -lh setdll.7z
+
+      - name: Attest Release Packages
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z
+            setdll.7z
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z
+            setdll.7z
+          body_path: release.md
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release Summary
+        run: |
+          echo "## 🎉 Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ env.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** ${{ env.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Date:** $(TZ='Asia/Ho_Chi_Minh' date '+%d/%m/%Y %H:%M:%S') (Vietnam Time)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Packages Released:" >> $GITHUB_STEP_SUMMARY
+          echo "- Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z" >> $GITHUB_STEP_SUMMARY
+          if [ -f setdll.7z ]; then
+            echo "- setdll.7z" >> $GITHUB_STEP_SUMMARY
+          fi
