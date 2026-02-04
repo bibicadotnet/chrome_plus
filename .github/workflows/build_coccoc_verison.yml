@@ -20,7 +20,22 @@ permissions:
   attestations: write
 
 jobs:
+  # Job đầu tiên: tạo VERSION duy nhất cho toàn bộ workflow
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    
+    steps:
+      - name: Get Vietnam Date Version
+        id: get_version
+        run: |
+          VERSION=$(TZ='Asia/Ho_Chi_Minh' date +%d.%m.%Y)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version set to: $VERSION"
+
   build:
+    needs: setup
     strategy:
       matrix:
         include:
@@ -41,11 +56,10 @@ jobs:
           submodules: 'true'
           fetch-depth: 0
 
-      - name: Get Vietnam Date Version
+      - name: Set Version from Setup Job
         shell: bash
         run: |
-          # Lấy ngày giờ UTC và chuyển sang múi giờ Việt Nam (UTC+7)
-          VERSION=$(TZ='Asia/Ho_Chi_Minh' date +%d.%m.%Y)
+          VERSION="${{ needs.setup.outputs.version }}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "Building version: $VERSION"
 
@@ -91,11 +105,11 @@ jobs:
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: version-${{ matrix.arch }}-${{ env.VERSION }}
+          name: version-${{ matrix.arch }}-${{ needs.setup.outputs.version }}
           path: build/release/*
 
   release:
-    needs: build
+    needs: [setup, build]
     runs-on: ubuntu-latest
 
     steps:
@@ -104,9 +118,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get Vietnam Date Version
+      - name: Set Version from Setup Job
         run: |
-          VERSION=$(TZ='Asia/Ho_Chi_Minh' date +%d.%m.%Y)
+          VERSION="${{ needs.setup.outputs.version }}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "Creating release for version: $VERSION"
 
@@ -184,6 +198,8 @@ jobs:
         run: |
           echo "=== Downloaded Artifacts ==="
           ls -laR build_artifacts/
+          echo ""
+          echo "Expected VERSION: ${{ env.VERSION }}"
 
       - name: Package All Artifacts
         run: |
@@ -269,13 +285,13 @@ jobs:
 
       - name: Release Summary
         run: |
-          echo "## 🎉 Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "## Release Created Successfully!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ env.VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ env.VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "**Build Date:** $(TZ='Asia/Ho_Chi_Minh' date '+%d/%m/%Y %H:%M:%S') (Vietnam Time)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 Packages Released:" >> $GITHUB_STEP_SUMMARY
+          echo "### Packages Released:" >> $GITHUB_STEP_SUMMARY
           echo "- Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z" >> $GITHUB_STEP_SUMMARY
           if [ -f setdll.7z ]; then
             echo "- setdll.7z" >> $GITHUB_STEP_SUMMARY
