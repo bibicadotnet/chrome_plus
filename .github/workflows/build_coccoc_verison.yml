@@ -58,22 +58,20 @@ jobs:
           echo "Đã cá nhân hóa thông tin build thành công."
       # --- KẾT THÚC ĐOẠN TỰ ĐỘNG CÁ NHÂN HÓA ---
 
-      - name: Update version.h
-        shell: bash
+      - name: Update version.h and Push
         run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            COMMIT_HASH=$(git rev-parse --short HEAD)
-            VERSION="alpha-${COMMIT_HASH}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            sed -i '/#define RELEASE_VER_STR/,/TOSTRING(RELEASE_VER_FIX)/c\#define RELEASE_VER_STR "'"$VERSION"'"' src/version.h
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-            sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
-            sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h 
-            sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
+          VERSION="${{ github.event.inputs.version }}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
+          sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
+          sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
+          
+          # Kiểm tra nếu file có thay đổi mới commit, tránh lỗi "nothing to commit"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add src/version.h
+            git commit -m "build(release): bump version to $VERSION"
           fi
+          git push origin release --force
 
       - name: Set CLANG_BIN
         shell: bash
