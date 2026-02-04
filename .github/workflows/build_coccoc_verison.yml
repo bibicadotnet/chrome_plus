@@ -22,7 +22,7 @@ permissions:
   contents: write
   packages: write
   pull-requests: write
-  
+
 jobs:
   build:
     strategy:
@@ -44,34 +44,28 @@ jobs:
         with:
           submodules: 'true'
 
-      # --- BẮT ĐẦU ĐOẠN TỰ ĐỘNG CÁ NHÂN HÓA ---
       - name: Personalize for Cốc Cốc Portable Debloat
         shell: bash
         run: |
-          # 1. Thay đổi tên hiển thị trong chrome++.rc
           sed -i 's/VALUE "FileDescription", "Chrome++ Next"/VALUE "FileDescription", "Cốc Cốc Portable Debloat"/g' src/chrome++.rc
-          
-          # 2. Thay đổi nội dung Powered by trong pakpatch.cc
-          # Sử dụng dấu | làm dấu phân cách vì trong URL có dấu /
           sed -i 's|https://github.com/Bush2021/chrome_plus">Chrome++ Next</a>|https://coccoc.bibica.net">Cốc Cốc Portable Debloat</a>|g' src/pakpatch.cc
-          
-          echo "Đã cá nhân hóa thông tin build thành công."
-      # --- KẾT THÚC ĐOẠN TỰ ĐỘNG CÁ NHÂN HÓA ---
 
-      - name: Update version.h and Push
+      - name: Update version.h
+        shell: bash
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
-          sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
-          sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
-          
-          # Kiểm tra nếu file có thay đổi mới commit, tránh lỗi "nothing to commit"
-          if [ -n "$(git status --porcelain)" ]; then
-            git add src/version.h
-            git commit -m "build(release): bump version to $VERSION"
+          if [ "${{ github.event_name }}" == "push" ]; then
+            COMMIT_HASH=$(git rev-parse --short HEAD)
+            VERSION="alpha-${COMMIT_HASH}"
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+            sed -i '/#define RELEASE_VER_STR/,/TOSTRING(RELEASE_VER_FIX)/c\#define RELEASE_VER_STR "'"$VERSION"'"' src/version.h
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+            sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
+            sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
+            sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
           fi
-          git push origin release --force
 
       - name: Set CLANG_BIN
         shell: bash
@@ -79,11 +73,16 @@ jobs:
           CLANG_BIN=$(dirname "$(where clang-cl | head -n 1)")
           echo "CLANG_BIN=$CLANG_BIN" >> $GITHUB_ENV
 
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
       - name: Setup Xmake
         uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: '3.0.5'
-          
+
       - name: Configure Xmake
         run: xmake f -a ${{ matrix.arch }} --toolchain=clang-cl --bin="${{ env.CLANG_BIN }}" --yes
 
@@ -98,7 +97,7 @@ jobs:
 
   create_pr:
     needs: build
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
 
     steps:
@@ -109,6 +108,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git push origin --delete release || true
           git checkout -b release
 
       - name: Update version.h and Push
@@ -124,7 +124,7 @@ jobs:
             echo "VERSION=$VERSION" >> $GITHUB_ENV
             IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
             sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
-            sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h 
+            sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
             sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
           fi
 
@@ -138,7 +138,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr create --base main --head release --title "build(release): bump version to ${{ github.event.inputs.version }}" --body "Bump version to ${{ github.event.inputs.version }}"
+          gh pr create --base main --head release --title "build(release): bump version to ${{ github.event.inputs.version }}" --body "Bump version to ${{ github.event.inputs.version }}" || echo "PR exists"
 
       - name: Output Run ID
         run: echo "RUN_ID=${{ github.run_id }}" >> $GITHUB_OUTPUT
