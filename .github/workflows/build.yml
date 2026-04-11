@@ -16,7 +16,15 @@ on:
     inputs:
       version:
         description: 'Release version (SemVer)'
-        required: true
+        required: false
+      build_mode:
+        description: 'Build mode'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
 
 jobs:
   build:
@@ -48,13 +56,35 @@ jobs:
             echo "VERSION=$VERSION" >> $GITHUB_ENV
             sed -i '/#define RELEASE_VER_STR/,/TOSTRING(RELEASE_VER_FIX)/c\#define RELEASE_VER_STR "'"$VERSION"'"' src/version.h
           elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-            sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
-            sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h 
-            sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
+            INPUT_VERSION="${{ github.event.inputs.version }}"
+            if [ -n "$INPUT_VERSION" ]; then
+              VERSION="$INPUT_VERSION"
+              if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::Invalid version '$VERSION'. Expected SemVer like 1.2.3" >&2
+                exit 1
+              fi
+              echo "VERSION=$VERSION" >> $GITHUB_ENV
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+              sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
+              sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
+              sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
+            else
+              COMMIT_HASH=$(git rev-parse --short HEAD)
+              VERSION="manual-${COMMIT_HASH}"
+              echo "VERSION=$VERSION" >> $GITHUB_ENV
+            fi
           fi
+
+      - name: Set Build Mode
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.build_mode }}" ]; then
+            BUILD_MODE="${{ github.event.inputs.build_mode }}"
+          else
+            BUILD_MODE="release"
+          fi
+          echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_ENV
+          echo "Using BUILD_MODE=$BUILD_MODE"
 
       - name: Set CLANG_BIN
         shell: bash
@@ -68,21 +98,27 @@ jobs:
           xmake-version: '3.0.5'
 
       - name: Configure Xmake
-        run: xmake f -a ${{ matrix.arch }} --toolchain=clang-cl --bin="${{ env.CLANG_BIN }}" --yes
+        run: xmake f -m ${{ env.BUILD_MODE }} -a ${{ matrix.arch }} --toolchain=clang-cl --bin="${{ env.CLANG_BIN }}" --yes
 
       - name: Build Chrome++
-        run: xmake
+        shell: bash
+        run: |
+          if [ "${{ env.BUILD_MODE }}" == "debug" ]; then
+            xmake -vD
+          else
+            xmake
+          fi
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: version-${{ matrix.arch }}-${{ env.VERSION }}
-          path: build/release/*
+          name: version-${{ matrix.arch }}${{ env.BUILD_MODE == 'debug' && '-debug' || '' }}-${{ env.VERSION }}
+          path: build/${{ env.BUILD_MODE }}/*
 
   create_pr:
     needs: build
     runs-on: ubuntu-slim
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
 
     steps:
       - name: Checkout repository
@@ -97,6 +133,10 @@ jobs:
       - name: Update version.h
         run: |
           VERSION="${{ github.event.inputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version '$VERSION'. Expected SemVer like 1.2.3" >&2
+            exit 1
+          fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
